@@ -641,26 +641,6 @@ std::string mergeTwoMsa(std::string & msa1, std::string & msa2, Matcher::result_
     size_t tEndSequence = qEndGaps;
     size_t tEndGaps     = qEndSequence;
 
-    // {
-    //     std::cout << map1.size() - 1 << " " << map1.at(res.qEndPos) << std::endl;
-    //     std::cout << "       qStartPos: " << res.qStartPos << std::endl; 
-    //     std::cout << "         qEndPos: " << res.qEndPos << std::endl; 
-    //     std::cout << "      dbStartPos: " << res.dbStartPos << std::endl; 
-    //     std::cout << "        dbEndPos: " << res.dbEndPos << std::endl; 
-    //     std::cout << "            qLen: " << res.qLen << std::endl; 
-    //     std::cout << "           dbLen: " << res.dbLen << std::endl; 
-    //     std::cout << std::endl;
-    //     std::cout << "    qPreSequence: " << qPreSequence << std::endl; 
-    //     std::cout << "        qPreGaps: " << qPreGaps << std::endl; 
-    //     std::cout << "    qEndSequence: " << qEndSequence << std::endl; 
-    //     std::cout << "        qEndGaps: " << qEndGaps << std::endl; 
-    //     std::cout << "    tPreSequence: " << tPreSequence << std::endl; 
-    //     std::cout << "        tPreGaps: " << tPreGaps << std::endl; 
-    //     std::cout << "    tEndSequence: " << tEndSequence << std::endl; 
-    //     std::cout << "        tEndGaps: " << tEndGaps << std::endl; 
-    //     std::cout << std::endl;
-    // }
-    
     // String for merged MSA
     std::string msa; 
     
@@ -809,6 +789,15 @@ std::string mergeTwoMsa(std::string & msa1, std::string & msa2, Matcher::result_
     return msa;
 }
 
+double getEnvVar(const char *varName, double fallback) {
+    if (const char* value = std::getenv(varName)) {
+        std::string value_str = std::string(value);
+        return std::stod(value_str);
+    } else {
+        return fallback;
+    }
+} 
+
 int generatetree(int argc, const char **argv, const Command& command) {
     LocalParameters &par = LocalParameters::getLocalInstance();
     
@@ -845,7 +834,7 @@ int generatetree(int argc, const char **argv, const Command& command) {
 
     std::cout << "Got substitution matrices" << std::endl;
     
-    // Initialise MSAs, Sequence objects
+    // Initialise MSAs, Sequence objects, initial masks
     size_t sequenceCnt = seqDbrAA.getSize();
     std::vector<Sequence*> allSeqs_aa(sequenceCnt);
     std::vector<Sequence*> allSeqs_3di(sequenceCnt);
@@ -872,13 +861,21 @@ int generatetree(int argc, const char **argv, const Command& command) {
     std::cout << "Initialised MSAs, Sequence objects" << std::endl;
 
     // Setup objects needed for profile calculation
-    // TODO: set pca/pcb proper params
+    double pca_aa = getEnvVar("PCA_AA", 1.5);
+    double pcb_aa = getEnvVar("PCB_AA", 2.1);
+    double pca_3di = getEnvVar("PCA_3DI", 1.4);
+    double pcb_3di = getEnvVar("PCB_3DI", 1.5);
+    double matchRatio = getEnvVar("MATCH_RATIO", 0.5);
+
+    par.pca = pca_aa;
+    par.pcb = pcb_aa;
     
     PSSMCalculator calculator_aa(&subMat_aa, maxSeqLength + 1, sequenceCnt + 1, par.pcmode, par.pca, par.pcb, par.gapOpen.values.aminoacid(), par.gapPseudoCount);
     MsaFilter filter_aa(maxSeqLength + 1, sequenceCnt +1, &subMat_aa, par.gapOpen.values.aminoacid(), par.gapExtend.values.aminoacid());
 
-    par.pca = 1.4;
-    par.pcb = 1.5;
+    par.pca = pca_3di;
+    par.pcb = pcb_3di;
+    par.matchRatio = matchRatio;
     par.scoringMatrixFile = "3di.out";
     par.seedScoringMatrixFile = "3di.out";
     par.maskProfile = 0;
@@ -958,7 +955,6 @@ int generatetree(int argc, const char **argv, const Command& command) {
         
         std::cout << "  Merged AA/3Di MSAs" << std::endl;
 
-        par.matchRatio = 0.5;
         std::string profile_aa = fastamsa2profile(msa_aa[mergedId], calculator_aa, filter_aa, subMat_aa, maxSeqLength,
                                                   sequenceCnt + 1, par.matchRatio, par.filterMsa,
                                                   par.compBiasCorrection,
