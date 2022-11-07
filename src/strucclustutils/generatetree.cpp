@@ -1049,7 +1049,7 @@ int generatetree(int argc, const char **argv, const Command& command) {
     assert(finalMSA != "");
 
     // Write final MSA to file with correct headers
-    DBWriter resultWriter(par.db3.c_str(), par.db3Index.c_str(), static_cast<unsigned int>(par.threads), par.compressed, Parameters::DBTYPE_OMIT_FILE);
+    DBWriter resultWriter(par.db3.c_str(), par.db3Index.c_str(), 1, par.compressed, Parameters::DBTYPE_OMIT_FILE);
     resultWriter.open();
     kseq_buffer_t d;
     d.buffer = (char*)finalMSA.c_str();
@@ -1064,7 +1064,7 @@ int generatetree(int argc, const char **argv, const Command& command) {
         resultWriter.writeAdd(entry.c_str(), entry.size(), 0);
     }
     resultWriter.writeEnd(0, 0, false, 0);
-    resultWriter.close(true);
+    resultWriter.close();
     FileUtil::remove(par.db3Index.c_str());
     
     // Cleanup
