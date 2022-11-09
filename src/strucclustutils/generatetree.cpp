@@ -815,7 +815,12 @@ int generatetree(int argc, const char **argv, const Command& command) {
     double pca_3di = getEnvVar("PCA_3DI", 1.4);
     double pcb_3di = getEnvVar("PCB_3DI", 1.5);
     double matchRatio = getEnvVar("MATCH_RATIO", 0.5);
-
+    double gapOpen = getEnvVar("GAPOPEN", 5.0);
+    double gapExtend = getEnvVar("GAPEXTEND", 2.0);
+    
+    par.gapOpen = gapOpen;
+    par.gapExtend = gapExtend;
+    
     par.pca = pca_aa;
     par.pcb = pcb_aa;
     
@@ -1004,11 +1009,6 @@ int generatetree(int argc, const char **argv, const Command& command) {
     std::string buffer;
     buffer.reserve(10 * 1024);
     while (kseq_read(seq) >= 0) {
-        // Save start position of each sequence on the fly
-        seqStarts[std::stoi(seq->name.s)] = 2 + seq->name.l + count;
-        count += seq->name.l + seq->seq.l + 3; 
-
-        // Write FASTA entry to file
         unsigned int id = qdbrH.sequenceReader->getId(std::stoi(seq->name.s));
         char* source = qdbrH.sequenceReader->getData(id, 0);
         buffer.append(1, '>');
@@ -1018,8 +1018,6 @@ int generatetree(int argc, const char **argv, const Command& command) {
         buffer.append(1, '\n');
         resultWriter.writeAdd(buffer.c_str(), buffer.size(), 0);
         buffer.clear();
-
-        if (finalLength == 0) finalLength = (int)seq->seq.l;
     }
     resultWriter.writeEnd(0, 0, false, 0);
     resultWriter.close();
