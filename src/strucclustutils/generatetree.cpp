@@ -866,7 +866,12 @@ int generatetree(int argc, const char **argv, const Command& command) {
     double pca_3di = getEnvVar("PCA_3DI", 1.4);
     double pcb_3di = getEnvVar("PCB_3DI", 1.5);
     double matchRatio = getEnvVar("MATCH_RATIO", 0.5);
-
+    double gapOpen = getEnvVar("GAPOPEN", 5.0);
+    double gapExtend = getEnvVar("GAPEXTEND", 2.0);
+    
+    par.gapOpen = gapOpen;
+    par.gapExtend = gapExtend;
+    
     par.pca = pca_aa;
     par.pcb = pcb_aa;
     
@@ -1056,12 +1061,19 @@ int generatetree(int argc, const char **argv, const Command& command) {
     d.length = finalMSA.length();
     kseq_t *seq = kseq_init(&d);
     resultWriter.writeStart(0);
+    std::string buffer;
+    buffer.reserve(10 * 1024);
     while (kseq_read(seq) >= 0) {
-        char* source = qdbrH.sequenceReader->getDataByDBKey(std::stoi(seq->name.s), 0);
-        std::ostringstream oss;
-        oss << '>' << source << seq->seq.s << '\n';
-        std::string entry = oss.str();
-        resultWriter.writeAdd(entry.c_str(), entry.size(), 0);
+        unsigned int id = qdbrH.sequenceReader->getId(std::stoi(seq->name.s));
+        char* source = qdbrH.sequenceReader->getData(id, 0);
+        size_t length = qdbrH.sequenceReader->getEntryLen(id) - 1;
+
+        buffer.append(1, '>');
+        buffer.append(source, length);
+        buffer.append(seq->seq.s, seq->seq.l);
+        buffer.append(1, '\n');
+        resultWriter.writeAdd(buffer.c_str(), buffer.size(), 0);
+        buffer.clear();
     }
     resultWriter.writeEnd(0, 0, false, 0);
     resultWriter.close();
