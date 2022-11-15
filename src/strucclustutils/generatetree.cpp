@@ -340,7 +340,7 @@ std::vector<AlnSimple> updateScores(StructureSmithWaterman& structureSmithWaterm
 
 std::string fastamsa2profile(std::string & msa, PSSMCalculator &pssmCalculator, MsaFilter &filter, SubstitutionMatrix &subMat, size_t maxSeqLength, size_t maxSetSize,
                              float matchRatio, bool filterMsa, bool compBiasCorrection, std::string & qid, float filterMaxSeqId, float Ndiff, float covMSAThr,
-                             float qsc, int filterMinEnable, bool wg, bool *externalMaskedColumns) {
+                             float qsc, int filterMinEnable, bool wg, bool *externalMaskedColumns, float scoreBias) {
     enum {
         MSA_CA3M = 0,
         MSA_A3M  = 1,
@@ -516,7 +516,7 @@ std::string fastamsa2profile(std::string & msa, PSSMCalculator &pssmCalculator, 
 
     PSSMCalculator::Profile pssmRes =
             pssmCalculator.computePSSMFromMSA(filteredSetSize, msaResult.centerLength,
-                                              (const char **) msaResult.msaSequence, alnResults, wg);
+                                              (const char **) msaResult.msaSequence, alnResults, wg, scoreBias);
     if (compBiasCorrection == true) {
         SubstitutionMatrix::calcGlobalAaBiasCorrection(&subMat, pssmRes.pssm, pNullBuffer,
                                                        Sequence::PROFILE_AA_SIZE,
@@ -766,8 +766,17 @@ int generatetree(int argc, const char **argv, const Command& command) {
     // Substitution matrices
     // TODO optimise on scoreBias in AA/3Di PSSMCalculators to make alignments more global
     // 0 to 1
+    float scoreBiasAA  = getEnvVar("SCORE_BIAS_AA",  0.0);
+    float scoreBias3Di = getEnvVar("SCORE_BIAS_3DI", 0.0);
+    float pca_aa = getEnvVar("PCA_AA", 1.5);
+    float pcb_aa = getEnvVar("PCB_AA", 2.1);
+    float pca_3di = getEnvVar("PCA_3DI", 1.4);
+    float pcb_3di = getEnvVar("PCB_3DI", 1.5);
+    float matchRatio = getEnvVar("MATCH_RATIO", 0.51);
+    int gapOpen = getEnvVar("GAPOPEN", 5);
+    int gapExtend = getEnvVar("GAPEXTEND", 2);
     
-    SubstitutionMatrix subMat_3di(par.scoringMatrixFile.values.aminoacid().c_str(), 2.1, par.scoreBias);
+    SubstitutionMatrix subMat_3di(par.scoringMatrixFile.values.aminoacid().c_str(), 2.1, scoreBias3Di);
     std::string blosum;
     for (size_t i = 0; i < par.substitutionMatrices.size(); i++) {
         if (par.substitutionMatrices[i].name == "blosum62.out") {
@@ -779,7 +788,7 @@ int generatetree(int argc, const char **argv, const Command& command) {
             break;
         }
     }
-    SubstitutionMatrix subMat_aa(blosum.c_str(), 1.4, par.scoreBias);
+    SubstitutionMatrix subMat_aa(blosum.c_str(), 1.4, scoreBiasAA);
 
     std::cout << "Got substitution matrices" << std::endl;
     
@@ -810,22 +819,11 @@ int generatetree(int argc, const char **argv, const Command& command) {
     std::cout << "Initialised MSAs, Sequence objects" << std::endl;
 
     // Setup objects needed for profile calculation
-    double pca_aa = getEnvVar("PCA_AA", 1.5);
-    double pcb_aa = getEnvVar("PCB_AA", 2.1);
-    double pca_3di = getEnvVar("PCA_3DI", 1.4);
-    double pcb_3di = getEnvVar("PCB_3DI", 1.5);
-    double matchRatio = getEnvVar("MATCH_RATIO", 0.5);
-    double gapOpen = getEnvVar("GAPOPEN", 5.0);
-    double gapExtend = getEnvVar("GAPEXTEND", 2.0);
-    
+    par.pca = pca_aa;
+    par.pcb = pca_3di;
     par.gapOpen = gapOpen;
     par.gapExtend = gapExtend;
     
-    par.pca = pca_aa;
-    par.pcb = pcb_aa;
-    
-    par.pca = 1.5;
-    par.pcb = 2.1;
     PSSMCalculator calculator_aa(&subMat_aa, maxSeqLength + 1, sequenceCnt + 1, par.pcmode, par.pca, par.pcb, par.gapOpen.values.aminoacid(), par.gapPseudoCount);
     MsaFilter filter_aa(maxSeqLength + 1, sequenceCnt +1, &subMat_aa, par.gapOpen.values.aminoacid(), par.gapExtend.values.aminoacid());
 
@@ -838,9 +836,6 @@ int generatetree(int argc, const char **argv, const Command& command) {
     par.evalProfile = 0.1;
     par.evalThr = 0.1;
     
-    // Don't lose columns in pairwise alignments when less than 50% gaps
-    par.matchRatio = 0.51;
-
     PSSMCalculator calculator_3di(&subMat_3di, maxSeqLength + 1, sequenceCnt + 1, par.pcmode, par.pca, par.pcb, par.gapOpen.values.aminoacid(), par.gapPseudoCount);
     MsaFilter filter_3di(maxSeqLength + 1, sequenceCnt + 1, &subMat_3di, par.gapOpen.values.aminoacid(), par.gapExtend.values.aminoacid());
     
@@ -918,7 +913,7 @@ int generatetree(int argc, const char **argv, const Command& command) {
                                                   par.compBiasCorrection,
                                                   par.qid, par.filterMaxSeqId, par.Ndiff, 0,
                                                   par.qsc,
-                                                  par.filterMinEnable, par.wg, NULL);
+                                                  par.filterMinEnable, par.wg, NULL, scoreBiasAA);
         std::cout << "  Got AA profile" << std::endl;
        
         // Mapping is stored at the end of the profile (to \n), so save to mappings[]
@@ -942,7 +937,7 @@ int generatetree(int argc, const char **argv, const Command& command) {
                                                    par.compBiasCorrection,
                                                    par.qid, par.filterMaxSeqId, par.Ndiff, par.covMSAThr,
                                                    par.qsc,
-                                                   par.filterMinEnable, par.wg, maskBool);
+                                                   par.filterMinEnable, par.wg, maskBool, scoreBias3Di);
         delete[] maskBool; 
         assert(profile_aa.length() == profile_3di.length());
         std::cout << "  Got 3Di profile" << std::endl;
@@ -1003,8 +998,6 @@ int generatetree(int argc, const char **argv, const Command& command) {
     d.length = finalMSA.length();
     kseq_t *seq = kseq_init(&d);
     resultWriter.writeStart(0);
-    int finalLength = 0;
-    int count = 0;
     std::vector<int> seqStarts(seqDbrAA.getSize());
     std::string buffer;
     buffer.reserve(10 * 1024);

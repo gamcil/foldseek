@@ -123,13 +123,13 @@ PSSMCalculator::~PSSMCalculator() {
 ////    PSSMCalculator::printPSSM(queryLength);
 //    }
 // this overload is only used in TestProfileAlignment.cpp and TestPSSM.cpp
-PSSMCalculator::Profile PSSMCalculator::computePSSMFromMSA(size_t setSize, size_t queryLength, const char **msaSeqs, bool wg) {
+PSSMCalculator::Profile PSSMCalculator::computePSSMFromMSA(size_t setSize, size_t queryLength, const char **msaSeqs, bool wg, float scoreBias) {
     std::vector<Matcher::result_t> dummy;
-    return computePSSMFromMSA(setSize, queryLength, msaSeqs, dummy, wg);
+    return computePSSMFromMSA(setSize, queryLength, msaSeqs, dummy, wg, scoreBias);
 }
 
 PSSMCalculator::Profile PSSMCalculator::computePSSMFromMSA(size_t setSize, size_t queryLength, const char **msaSeqs,
-                                                           const std::vector<Matcher::result_t> &alnResults, bool wg) {
+                                                           const std::vector<Matcher::result_t> &alnResults, bool wg, float scoreBias) {
     increaseSetSize(setSize);
     // Quick and dirty calculation of the weight per sequence wg[k]
     computeSequenceWeights(seqWeight, queryLength, setSize, msaSeqs);
@@ -174,7 +174,7 @@ PSSMCalculator::Profile PSSMCalculator::computePSSMFromMSA(size_t setSize, size_
 //    PSSMCalculator::printPSSM(queryLength);
 
     // create final Matrix
-    computeLogPSSM(subMat, pssm, profile, 8.0, queryLength, 0.0);
+    computeLogPSSM(subMat, pssm, profile, 8.0, queryLength, scoreBias);
     computeGapPenalties(queryLength, setSize, msaSeqs, alnResults);
 //    PSSMCalculator::printProfile(queryLength);
 
