@@ -998,15 +998,15 @@ int generatetree(int argc, const char **argv, const Command& command) {
     d.length = finalMSA.length();
     kseq_t *seq = kseq_init(&d);
     resultWriter.writeStart(0);
-    std::vector<int> seqStarts(seqDbrAA.getSize());
     std::string buffer;
     buffer.reserve(10 * 1024);
     while (kseq_read(seq) >= 0) {
         unsigned int id = qdbrH.sequenceReader->getId(std::stoi(seq->name.s));
         char* source = qdbrH.sequenceReader->getData(id, 0);
+        size_t length = qdbrH.sequenceReader->getEntryLen(id) - 1;
+
         buffer.append(1, '>');
-        buffer.append(Util::parseFastaHeader(source));
-        buffer.append(1, '\n');
+        buffer.append(source, length);
         buffer.append(seq->seq.s, seq->seq.l);
         buffer.append(1, '\n');
         resultWriter.writeAdd(buffer.c_str(), buffer.size(), 0);
