@@ -820,7 +820,7 @@ int generatetree(int argc, const char **argv, const Command& command) {
 
     // Setup objects needed for profile calculation
     par.pca = pca_aa;
-    par.pcb = pca_3di;
+    par.pcb = pcb_aa;
     par.gapOpen = gapOpen;
     par.gapExtend = gapExtend;
     
