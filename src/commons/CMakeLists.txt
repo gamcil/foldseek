@@ -9,6 +9,8 @@ set(commons_source_files
         commons/TMaligner.h
 	commons/MSANode.h
 	commons/MSANode.cpp
+        commons/Newick.h
+        commons/Newick.cpp
         commons/StructureSmithWaterman.cpp
         commons/StructureSmithWaterman.h
         PARENT_SCOPE)
