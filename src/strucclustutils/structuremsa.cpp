@@ -29,6 +29,7 @@
 #include "kseq.h"
 #include "KSeqBufferReader.h"
 #include "LDDT.h"
+#include "Coordinate16.h"
 
 #ifdef OPENMP
 #include <omp.h>
@@ -44,6 +45,204 @@ struct AlnSimple {
     unsigned int targetId;
     int score;
 };
+
+
+std::vector<float> calcWCN(float *caData, int length) {
+    // Iterate residues x
+    //   Iterate residues y
+    //     skip x == y
+    //     xy_dist = dist(x, y)
+    //     if xy_dist < cutoff [15.00]
+    //       residues[x] += 1/(xy_dist)^2
+    float cutoff = 15.00; 
+    float qx_tx, qy_ty, qz_tz, qtDist;
+    
+    std::vector<float> wcn;
+    wcn.reserve(length);
+
+    for (size_t i = 0; i < length; i++) {
+        wcn[i] = 0.0;
+        for (size_t j = 0; j < length; j++) {
+            if (i == j) continue;
+            qx_tx = caData[i] - caData[j];
+            qy_ty = caData[i + length] - caData[j + length];
+            qz_tz = caData[i + 2 * length] - caData[j + 2 * length];
+            qtDist = sqrt(qx_tx * qx_tx + qy_ty * qy_ty + qz_tz * qz_tz);
+            if (qtDist < cutoff)  // is close
+                wcn[i] += 1 / pow(qtDist, 2);
+        }
+    }
+
+    return wcn;
+}
+
+const static unsigned int SUBSTITUTIONMATRIX = 1;
+const static unsigned int PROFILE = 2;
+const static unsigned int PROFILE_HMM = 3;
+
+// Global alignment of two Sequence objects
+Matcher::result_t globalAlignment(
+    BaseMatrix *subMat_aa,
+    Sequence *seqA_aa,
+    Sequence *seqB_aa,
+    BaseMatrix *subMat_3di,
+    Sequence *seqA_3di,
+    Sequence *seqB_3di,
+    int gapOpen,
+    int gapExtend
+    // DBReader seqDbrCA
+) {    
+    unsigned char *seqA_aa_seq = seqA_aa->numSequence;
+    unsigned char *seqB_aa_seq = seqB_aa->numSequence;
+    unsigned char *seqA_3di_seq = seqA_3di->numSequence;
+    unsigned char *seqB_3di_seq = seqB_3di->numSequence;
+
+    bool queryIsProfile = (Parameters::isEqualDbtype(seqA_aa->getSeqType(), Parameters::DBTYPE_HMM_PROFILE));
+    if (queryIsProfile) {
+        seqA_aa_seq = seqA_aa->numConsensusSequence;
+        seqA_3di_seq = seqA_3di->numConsensusSequence;
+    }
+
+    bool targetIsProfile = (Parameters::isEqualDbtype(seqB_aa->getSeqType(), Parameters::DBTYPE_HMM_PROFILE));
+    if (targetIsProfile) {
+        seqB_aa_seq = seqB_aa->numConsensusSequence;
+        seqB_3di_seq = seqB_3di->numConsensusSequence;
+    }
+    
+    int n = seqA_aa->L;
+    int m = seqB_aa->L;
+
+    enum {
+        DIAG = 0,
+        LEFT = 1,
+        UP = 2,
+        DONE = 3
+    };
+ 
+    float V[m + 1][n + 1]; // matches
+    float G[m + 1][n + 1]; // best scores ending with gap in q (deletion)
+    float H[m + 1][n + 1]; // best scores ending with gap in t (insertion)
+    int moves[m + 1][n + 1]; // directions between best scores, 0=diag, 1=left, 2=top
+    
+    float gapFirst = gapOpen + gapExtend;
+    
+    // Initialisation
+    V[0][0] = 0;
+    G[0][0] = 0;
+    H[0][0] = 0;
+    moves[0][0] = DONE;
+    
+
+    // TODO sw flag
+    // initialise to 0 instead of inf
+
+    // TODO implement wcn
+    // need weighting terms AA vs 3Di vs WCN
+
+    for (int i = 1; i <= m; i++) {
+        V[i][0] = i * -gapOpen;
+        H[i][0] = -INFINITY;
+        moves[i][0] = LEFT;
+    }
+
+    for (int j = 1; j <= n; j++) {
+        V[0][j] = 0; //j * -gapOpen;
+        G[0][j] = -INFINITY;
+        moves[0][j] = UP;
+    }
+    
+    for (int i = 1; i <= m; i++) {
+        for (int j = 1; j <= n; j++) {
+            int score_aa;
+            int score_3di;
+            
+            if (queryIsProfile) {  // qL x AA (e.g. seq->L x 20)
+                score_aa = seqA_aa->profile_for_alignment[seqB_aa_seq[i - 1] * seqA_aa->L + j];
+                score_3di = seqA_3di->profile_for_alignment[seqB_3di_seq[i - 1] * seqA_3di->L + j];
+            } else {
+                score_aa = subMat_aa->subMatrix[seqA_aa_seq[j - 1]][seqB_aa_seq[i - 1]];
+                score_3di = subMat_3di->subMatrix[seqA_3di_seq[j - 1]][seqB_3di_seq[i - 1]];
+            }
+
+            int score_combined = score_aa + score_3di;
+            
+            if (queryIsProfile) {
+                gapOpen = seqA_aa->gDel[j] + seqA_3di->gDel[j];
+                gapExtend = seqA_aa->gIns[j] + seqA_3di->gIns[j];
+                gapFirst = gapOpen + gapExtend;
+            }
+            
+            G[i][j] = std::max(G[i - 1][j] - gapExtend, V[i - 1][j] - gapFirst);
+            H[i][j] = std::max(H[i][j - 1] - gapExtend, V[i][j - 1] - gapFirst);
+            V[i][j] = std::max(V[i - 1][j - 1] + score_combined, std::max(G[i][j], H[i][j]));
+            
+            // TODO set to 0 if <0
+            
+            if (V[i][j] == V[i - 1][j - 1] + score_combined)
+                moves[i][j] = DIAG;
+            else if (V[i][j] == H[i][j])
+                moves[i][j] = UP;
+            else if (V[i][j] == G[i][j])
+                moves[i][j] = LEFT;
+            
+            // Linear version
+            // int match_  = M[i - 1][j - 1] + score_aa;// + score_3di;
+            // int insert_ = M[i][j - 1] - gapOpen;
+            // int delete_ = M[i - 1][j] - gapOpen;
+            // M[i][j] = std::max({ match_, insert_, delete_ });
+        }
+    }
+    
+    int max_i = 0;
+    int max_j = 0;
+    for (int i = 0; i < m; i++)
+        if (V[i][n] > V[max_i][n])
+            max_i = i;
+    for (int j = 0; j < n; j++)
+        if (V[m][j] > V[m][max_j])
+            max_j = j;
+    
+    std::string cigar;
+    int i = m; //max_i;
+    int j = max_j;
+    while (i > 0 || j > 0) {
+        if (moves[i][j] == DIAG) {
+            cigar = "M" + cigar;
+            i--;
+            j--;
+        } else if (moves[i][j] == LEFT) {
+            cigar = "D" + cigar;
+            i--;
+        } else if (moves[i][j] == UP) {
+            cigar = "I" + cigar;
+            j--;
+        }
+    }
+
+    Matcher::result_t hit;
+    hit.qLen = n;
+    hit.dbLen = m;
+    hit.qStartPos = 0;
+    hit.dbStartPos = 0;
+    hit.qEndPos = max_j - 1;
+    hit.dbEndPos = m - 1;   
+
+    // Ensure alignment starts and ends on match state
+    while (cigar[0] != 'M') {
+        if (cigar[0] == 'D') hit.dbStartPos++;
+        else hit.qStartPos++;
+        cigar.erase(cigar.begin());
+    }
+    while (cigar[cigar.length() - 1] != 'M') {
+        if (cigar[cigar.length() - 1] == 'D') hit.dbEndPos--;
+        else hit.qEndPos--;
+        cigar.pop_back();
+    }
+
+    hit.alnLength = Matcher::computeAlnLength(hit.qStartPos, hit.qEndPos, hit.dbStartPos, hit.dbEndPos);
+    hit.backtrace = cigar;
+    return hit;
+}
 
 Matcher::result_t pairwiseAlignment(StructureSmithWaterman & aligner, unsigned int querySeqLen,  Sequence *target_aa, Sequence *target_3di, int gapOpen,
                   int gapExtend) {
@@ -395,11 +594,11 @@ void getMergeInstructions(
     int new_t, dt;
     int old_q = map1[res.qStartPos];
     int old_t = map2[res.dbStartPos];
-    int q = res.qStartPos + 1;  // indices in non-gappy sequence
-    int t = res.dbStartPos + 1;
-    
+    int q = res.qStartPos;  // indices in non-gappy sequence
+    int t = res.dbStartPos;
+   
     // Generate instructions for query/target sequences from backtrace
-    for (size_t i = 1; i < res.backtrace.length(); ++i) {
+    for (size_t i = 0; i < res.backtrace.length(); ++i) {
         switch (res.backtrace[i]) {
             case 'M': {
                 new_q = map1[q];
@@ -446,6 +645,13 @@ void getMergeInstructions(
     }
 }
 
+void printResult(Matcher::result_t &result) {
+    std::cout << " qStartPos: " << result.qStartPos << '\n';
+    std::cout << "dbStartPos: " << result.dbStartPos << '\n';
+    std::cout << "   qEndPos: " << result.qEndPos << '\n';
+    std::cout << "  dbEndPos: " << result.dbEndPos << '\n';
+}
+
 /**
  * @brief Merges two MSAs
  * 
@@ -470,8 +676,8 @@ std::string mergeTwoMsa(
     // Calculate pre/end gaps/sequences from backtrace
     size_t qPreSequence = map1[res.qStartPos];
     size_t qPreGaps     = map2[res.dbStartPos];
-    size_t qEndSequence = map1[map1.size() - 1] - map1.at(res.qEndPos);
-    size_t qEndGaps     = map2[map2.size() - 1] - map2.at(res.dbEndPos);
+    size_t qEndSequence = map1[map1.size() - 1] - map1[res.qEndPos];
+    size_t qEndGaps     = map2[map2.size() - 1] - map2[res.dbEndPos];
     size_t tPreSequence = qPreGaps;
     size_t tPreGaps     = qPreSequence;
     size_t tEndSequence = qEndGaps;
@@ -508,6 +714,7 @@ std::string mergeTwoMsa(
                 msa.append(ins.count, '-');
             }
         }
+
         // Post-alignment: in query, sequence before gaps
         msa.append(seq->seq.s, q, qEndSequence);
         msa.append(qEndGaps, '-'); 
@@ -694,6 +901,43 @@ std::vector<AlnSimple> parseNewick(std::string newick, std::map<std::string, int
 }
 
 
+std::string formatMSA(std::string &msa, std::vector<std::string> &headers) {
+    kseq_buffer_t d;
+    d.buffer = (char*)msa.c_str();
+    d.length = msa.length();
+    kseq_t *seq = kseq_init(&d);
+    std::string buffer;
+    while (kseq_read(seq) >= 0) {
+        buffer.append(1, '>');
+        buffer.append(headers[std::stoi(seq->name.s)]);
+        buffer.append(1, '\n');
+        buffer.append(seq->seq.s, seq->seq.l);
+        buffer.append(1, '\n');
+    }
+    return buffer;
+}
+
+void formatMSA(std::string &msa, std::vector<std::string> &headers, DBWriter &writer) {
+    kseq_buffer_t d;
+    d.buffer = (char*)msa.c_str();
+    d.length = msa.length();
+    kseq_t *seq = kseq_init(&d);
+    writer.writeStart(0);
+    std::string buffer;
+    buffer.reserve(10 * 1024);
+    while (kseq_read(seq) >= 0) {
+        buffer.append(1, '>');
+        buffer.append(headers[std::stoi(seq->name.s)]);
+        buffer.append(1, '\n');
+        buffer.append(seq->seq.s, seq->seq.l);
+        buffer.append(1, '\n');
+        writer.writeAdd(buffer.c_str(), buffer.size(), 0);
+        buffer.clear();
+    }
+    writer.writeEnd(0, 0, false, 0);
+}
+
+
 int structuremsa(int argc, const char **argv, const Command& command) {
     LocalParameters &par = LocalParameters::getLocalInstance();
     
@@ -704,14 +948,20 @@ int structuremsa(int argc, const char **argv, const Command& command) {
     par.parseParameters(argc, argv, command, true, 0, MMseqsParameter::COMMAND_ALIGN);
     DBReader<unsigned int> seqDbrAA(par.db1.c_str(), par.db1Index.c_str(), par.threads, DBReader<unsigned int>::USE_INDEX|DBReader<unsigned int>::USE_DATA);
     seqDbrAA.open(DBReader<unsigned int>::NOSORT);
+    DBReader<unsigned int> seqDbrCA((par.db1+"_ca").c_str(), (par.db1+"_ca.index").c_str(), par.threads, DBReader<unsigned int>::USE_INDEX|DBReader<unsigned int>::USE_DATA);
+    seqDbrCA.open(DBReader<unsigned int>::NOSORT);
     DBReader<unsigned int> seqDbr3Di((par.db1+"_ss").c_str(), (par.db1+"_ss.index").c_str(), par.threads, DBReader<unsigned int>::USE_INDEX|DBReader<unsigned int>::USE_DATA);
     seqDbr3Di.open(DBReader<unsigned int>::NOSORT);
+
+    DBReader<unsigned int> seqDbr3Di40((par.db1+"_40").c_str(), (par.db1+"_40.index").c_str(), par.threads, DBReader<unsigned int>::USE_INDEX|DBReader<unsigned int>::USE_DATA);
+    seqDbr3Di40.open(DBReader<unsigned int>::NOSORT);
    
     IndexReader qdbrH(par.db1, par.threads, IndexReader::HEADERS, touch ? IndexReader::PRELOAD_INDEX : 0);
     
     std::cout << "Got databases" << std::endl;
    
     SubstitutionMatrix subMat_3di(par.scoringMatrixFile.values.aminoacid().c_str(), 2.1, par.scoreBias3di);
+
     std::string blosum;
     for (size_t i = 0; i < par.substitutionMatrices.size(); i++) {
         if (par.substitutionMatrices[i].name == "blosum62.out") {
@@ -737,6 +987,9 @@ int structuremsa(int argc, const char **argv, const Command& command) {
     std::vector<int> idMappings(sequenceCnt);
     std::vector<std::string> headers(sequenceCnt);
     std::map<std::string, int> headers_rev;
+        
+    std::vector<std::vector<float> > wcns;
+    wcns.reserve(sequenceCnt);
 
     int maxSeqLength = 0;
     for (int i = 0; i < sequenceCnt; i++) {
@@ -745,12 +998,12 @@ int structuremsa(int argc, const char **argv, const Command& command) {
         allSeqs_aa[i] = new Sequence(par.maxSeqLen, seqDbrAA.getDbtype(), (const BaseMatrix *) &subMat_aa, 0, false, par.compBiasCorrection);
         allSeqs_aa[i]->mapSequence(i, seqKeyAA, seqDbrAA.getData(i, 0), seqDbrAA.getSeqLen(i));
         allSeqs_3di[i] = new Sequence(par.maxSeqLen, seqDbr3Di.getDbtype(), (const BaseMatrix *) &subMat_3di, 0, false, par.compBiasCorrection);
-        allSeqs_3di[i]->mapSequence(i, seqKey3Di, seqDbr3Di.getData(i, 0), seqDbr3Di.getSeqLen(i));
+        allSeqs_3di[i]->mapSequence(i, seqKey3Di, seqDbr3Di40.getData(i, 0), seqDbr3Di40.getSeqLen(i));
         maxSeqLength = std::max(maxSeqLength, allSeqs_aa[i]->L);
         msa_aa[i] += ">" + SSTR(i) + "\n";
         msa_aa[i] += seqDbrAA.getData(i, 0);
         msa_3di[i] += ">" +  SSTR(i) + "\n";
-        msa_3di[i] += seqDbr3Di.getData(i, 0);
+        msa_3di[i] += seqDbr3Di40.getData(i, 0);
         mappings[i] = std::string(seqDbrAA.getSeqLen(i), '0');
         
         // Map each sequence id to itself for now
@@ -761,6 +1014,19 @@ int structuremsa(int argc, const char **argv, const Command& command) {
         header = header.substr(0, std::min(header.length() - 1, header.find(' ', 0)));
         headers[i] = header;
         headers_rev[header] = i;
+        
+        std::cout << msa_aa[i];
+        
+        Coordinate16 coords;
+        char *qcadata = seqDbrCA.getData(seqKeyAA, 0);
+        size_t caLength = seqDbrCA.getEntryLen(seqKeyAA);
+        float *caData = coords.read(qcadata, 0, caLength);
+        wcns[i] = calcWCN(caData, allSeqs_aa[i]->L);
+        
+        // for (size_t k = 0; k < allSeqs_aa[i]->L; k++){ 
+        //     std::cout << wcns[i][k] << ", ";
+        // }
+        // std::cout << '\n';
     }
     
     // TODO: dynamically calculate and re-init PSSMCalculator/MsaFilter each iteration
@@ -772,9 +1038,6 @@ int structuremsa(int argc, const char **argv, const Command& command) {
     PSSMCalculator calculator_aa(&subMat_aa, maxSeqLength + 1, sequenceCnt + 1, par.pcmode, par.pcaAa, par.pcbAa, par.gapOpen.values.aminoacid(), par.gapPseudoCount);
     MsaFilter filter_aa(maxSeqLength + 1, sequenceCnt + 1, &subMat_aa, par.gapOpen.values.aminoacid(), par.gapExtend.values.aminoacid());
 
-    par.scoringMatrixFile = "3di.out";
-    par.seedScoringMatrixFile = "3di.out";
-    
     PSSMCalculator calculator_3di(&subMat_3di, maxSeqLength + 1, sequenceCnt + 1, par.pcmode, par.pca3di, par.pcb3di, par.gapOpen.values.aminoacid(), par.gapPseudoCount);
     MsaFilter filter_3di(maxSeqLength + 1, sequenceCnt + 1, &subMat_3di, par.gapOpen.values.aminoacid(), par.gapExtend.values.aminoacid());
     
@@ -814,10 +1077,9 @@ int structuremsa(int argc, const char **argv, const Command& command) {
             newick.close();
         }
         hits = parseNewick(tree, headers_rev);
-        if (par.regressive)
-            std::reverse(hits.begin(), hits.end());
     } else {
         // Initial alignments
+        std::cout << "Performing initial all vs all alignments" << std::endl;
         hits = updateAllScores(
             structureSmithWaterman,
             tinySubMatAA,
@@ -830,20 +1092,83 @@ int structuremsa(int argc, const char **argv, const Command& command) {
             par.gapExtend.values.aminoacid()
         );
         sortHitsByScore(hits);
-        std::cout << "Performed initial all vs all alignments" << std::endl;
     }
+    if (par.regressive)
+        std::reverse(hits.begin(), hits.end());
 
     // Initialise Newick tree nodes
     std::vector<std::string> treeNodes(sequenceCnt);
     for (int i = 0; i < sequenceCnt; ++i)
         treeNodes[i] = std::to_string(i);
 
+    bool pairwise = false;
+    bool global = true;
+    if (pairwise) {
+        for (int i = 0; i < sequenceCnt; i += 2) {
+            int one = i;
+            int two = i + 1;
+            Matcher::result_t res;
+            if (global) {
+                res = globalAlignment(
+                    &subMat_aa,
+                    allSeqs_aa[one],
+                    allSeqs_aa[two],
+                    &subMat_3di,
+                    allSeqs_3di[one],
+                    allSeqs_3di[two],
+                    par.gapOpen.values.aminoacid(),
+                    par.gapExtend.values.aminoacid()
+                );               
+            } else {
+                structureSmithWaterman.ssw_init(
+                    allSeqs_aa[one],
+                    allSeqs_3di[one],
+                    tinySubMatAA,
+                    tinySubMat3Di,
+                    &subMat_aa
+                );
+                res = pairwiseAlignment(
+                    structureSmithWaterman,
+                    allSeqs_aa[one]->L,
+                    allSeqs_aa[two],
+                    allSeqs_3di[two],
+                    par.gapOpen.values.aminoacid(),
+                    par.gapExtend.values.aminoacid()
+                );
+            }
+            std::vector<int> map1 = maskToMapping(mappings[one], res.qLen);
+            std::vector<int> map2 = maskToMapping(mappings[two], res.dbLen);
+            std::vector<Instruction> qBt;
+            std::vector<Instruction> tBt;
+            getMergeInstructions(res, map1, map2, qBt, tBt);
+            std::string pmsa_aa  = mergeTwoMsa(msa_aa[one], msa_aa[two], res, map1, map2, qBt, tBt);
+            // std::string pmsa_3di = mergeTwoMsa(msa_3di[one], msa_3di[two], res, map1, map2, qBt, tBt);
+            // std::cout << formatMSA(pmsa_aa, headers) << '\n';
+            // std::cout << formatMSA(pmsa_3di, headers) << '\n';
+            
+            std::string filename;
+            filename.append(SSTR(one));
+            filename.append(1, '_');
+            filename.append(SSTR(two));
+            std::string index = filename;
+            filename.append(".fa");
+            index.append("_idx");
+            
+            DBWriter resultWriter(filename.c_str(), index.c_str(), static_cast<unsigned int>(par.threads), par.compressed, Parameters::DBTYPE_OMIT_FILE);
+            resultWriter.open();
+            formatMSA(pmsa_aa, headers, resultWriter);
+            resultWriter.close(true);
+            FileUtil::remove(index.c_str());
+        }
+        exit(0);
+    }
+
     std::cout << "Merging:\n";
     size_t merged = 0;
     while (hits.size() > 0) {
         if (idMappings[hits[0].queryId] == idMappings[hits[0].targetId]) 
             continue;
-
+            
         unsigned int mergedId = std::min(hits[0].queryId, hits[0].targetId);
         unsigned int targetId = std::max(hits[0].queryId, hits[0].targetId);
         mergedId = idMappings[mergedId];
@@ -896,8 +1221,25 @@ int structuremsa(int argc, const char **argv, const Command& command) {
         
         structureSmithWaterman.ssw_init(allSeqs_aa[mergedId], allSeqs_3di[mergedId], tinySubMatAA, tinySubMat3Di, &subMat_aa);
         
-        Matcher::result_t res = pairwiseAlignment(structureSmithWaterman, allSeqs_aa[mergedId]->L, allSeqs_aa[targetId],
-                                                  allSeqs_3di[targetId], par.gapOpen.values.aminoacid(), par.gapExtend.values.aminoacid());
+        Matcher::result_t res = globalAlignment(
+            &subMat_aa,
+            allSeqs_aa[mergedId],
+            allSeqs_aa[targetId],
+            &subMat_3di,
+            allSeqs_3di[mergedId],
+            allSeqs_3di[targetId],
+            par.gapOpen.values.aminoacid(),
+            par.gapExtend.values.aminoacid()
+        );
+        
+        // Matcher::result_t res = pairwiseAlignment(
+        //     structureSmithWaterman,
+        //     allSeqs_aa[mergedId]->L,
+        //     allSeqs_aa[targetId],
+        //     allSeqs_3di[targetId],
+        //     par.gapOpen.values.aminoacid(),
+        //     par.gapExtend.values.aminoacid()
+        // );
 
         // Convert 010101 mask to [ 0, 2, 4 ] index mapping
         std::vector<int> map1 = maskToMapping(mappings[mergedId], res.qLen);
@@ -912,6 +1254,9 @@ int structuremsa(int argc, const char **argv, const Command& command) {
         msa_3di[mergedId] = mergeTwoMsa(msa_3di[mergedId], msa_3di[targetId], res, map1, map2, qBt, tBt);
         msa_3di[targetId] = "";
         assert(msa_aa[mergedId].length() == msa_3di[mergedId].length());
+        
+        // std::cout << msa_aa[mergedId] << '\n';
+        // std::cout << msa_3di[mergedId] << '\n';
 
         std::string profile_aa = fastamsa2profile(msa_aa[mergedId], calculator_aa, filter_aa, subMat_aa, maxSeqLength,
                                                   sequenceCnt + 1, par.matchRatio, par.filterMsa,
@@ -970,6 +1315,8 @@ int structuremsa(int argc, const char **argv, const Command& command) {
                 par.gapExtend.values.aminoacid()
             );
             sortHitsByScore(hits);
+            if (par.regressive)
+                std::reverse(hits.begin(), hits.end());
         } else {
             // If guide tree, just get rid of the top hit so we look at next pair next round
             // Otherwise, we are just not recomputing - remove any hit causing a cycle
@@ -1021,29 +1368,14 @@ int structuremsa(int argc, const char **argv, const Command& command) {
     // Write final MSA to file with correct headers
     DBWriter resultWriter(par.db2.c_str(), par.db2Index.c_str(), static_cast<unsigned int>(par.threads), par.compressed, Parameters::DBTYPE_OMIT_FILE);
     resultWriter.open();
-    kseq_buffer_t d;
-    d.buffer = (char*)finalMSA.c_str();
-    d.length = finalMSA.length();
-    kseq_t *seq = kseq_init(&d);
-    resultWriter.writeStart(0);
-    std::string buffer;
-    buffer.reserve(10 * 1024);
-    while (kseq_read(seq) >= 0) {
-        buffer.append(1, '>');
-        buffer.append(headers[std::stoi(seq->name.s)]);
-        buffer.append(1, '\n');
-        buffer.append(seq->seq.s, seq->seq.l);
-        buffer.append(1, '\n');
-        resultWriter.writeAdd(buffer.c_str(), buffer.size(), 0);
-        buffer.clear();
-    }
-    resultWriter.writeEnd(0, 0, false, 0);
+    formatMSA(finalMSA, headers, resultWriter);
     resultWriter.close(true);
     FileUtil::remove(par.db2Index.c_str());
    
     // Cleanup
     seqDbrAA.close();
     seqDbr3Di.close();
+    seqDbr3Di40.close();
     delete[] alreadyMerged;
     delete [] tinySubMatAA;
     delete [] tinySubMat3Di;

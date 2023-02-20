@@ -56,7 +56,7 @@ LocalParameters::LocalParameters() :
     PARAM_WRAPPED_SCORING.category = MMseqsParameter::COMMAND_HIDDEN;
     PARAM_ALPH_SIZE.category = MMseqsParameter::COMMAND_HIDDEN;
     PARAM_INCLUDE_IDENTITY.category = MMseqsParameter::COMMAND_HIDDEN;
-
+    
     scoringMatrixFile = "3di.out";
     seedScoringMatrixFile = "3di.out";
     substitutionMatrices.emplace_back("3di.out", mat3di_out, mat3di_out_len);
@@ -166,6 +166,7 @@ LocalParameters::LocalParameters() :
     structuremsa.push_back(&PARAM_GUIDE_TREE);
     structuremsa.push_back(&PARAM_RECOMPUTE_SCORES);
     structuremsa.push_back(&PARAM_REGRESSIVE);
+    structuremsa.push_back(&PARAM_SUB_MAT);
     
     pcaAa = 1.1;
     pcbAa = 4.1;
