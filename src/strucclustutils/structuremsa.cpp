@@ -342,54 +342,54 @@ Matcher::result_t pairwiseAlignment(
     //     backtrace
     // );
 
-    short **query_profile_scores_aa = new short * [aligner.get_profile()->alphabetSize];
-    short **query_profile_scores_3di = new short * [aligner.get_profile()->alphabetSize];
-    short **query_profile_scores_nbr = new short * [aligner.get_profile()->alphabetSize];
+    float **query_profile_scores_aa  = new float * [aligner.get_profile()->alphabetSize];
+    float **query_profile_scores_3di = new float * [aligner.get_profile()->alphabetSize];
+    float **query_profile_scores_nbr = new float * [aligner.get_profile()->alphabetSize];
     for (int32_t j = 0; j < aligner.get_profile()->alphabetSize; j++) {
-        query_profile_scores_aa[j] = new short [querySeqLen];
-        query_profile_scores_3di[j] = new short [querySeqLen];
-        query_profile_scores_nbr[j] = new short [querySeqLen];
+        query_profile_scores_aa[j]  = new float [querySeqLen];
+        query_profile_scores_3di[j] = new float [querySeqLen];
+        query_profile_scores_nbr[j] = new float [querySeqLen];
     }
     if (queryIsProfile) {
         for (unsigned int i = 0; i < querySeqLen; i++) {
             for (int32_t j = 0; j < aligner.get_profile()->alphabetSize; j++) {
-                query_profile_scores_aa[j][i]  = query_aa->profile_for_alignment[j * querySeqLen + i];
-                query_profile_scores_3di[j][i] = query_3di->profile_for_alignment[j * querySeqLen + i];
-                query_profile_scores_nbr[j][i] = query_nbr->profile_for_alignment[j * querySeqLen + i];
+                query_profile_scores_aa[j][i]  = 1 / (1 + std::exp(-query_aa->profile_for_alignment[j * querySeqLen + i] ));
+                query_profile_scores_3di[j][i] = 1 / (1 + std::exp(-query_3di->profile_for_alignment[j * querySeqLen + i]));
+                query_profile_scores_nbr[j][i] = 1 / (1 + std::exp(-query_nbr->profile_for_alignment[j * querySeqLen + i]));
             }
         }
     } else {
         for (unsigned int i = 0; i < querySeqLen; i++) {
             for (int32_t j = 0; j < aligner.get_profile()->alphabetSize; j++) {
-                query_profile_scores_aa[j][i]  = mat_aa->subMatrix[j][query_aa_seq[i]]   + composition_bias_aa[i];
-                query_profile_scores_3di[j][i] = mat_3di->subMatrix[j][query_3di_seq[i]] + composition_bias_ss[i];
-                query_profile_scores_nbr[j][i] = mat_nbr->subMatrix[j][query_nbr_seq[i]];
+                query_profile_scores_aa[j][i]  = 1 / (1 + std::exp(-mat_aa->subMatrix[j][query_aa_seq[i]]   + composition_bias_aa[i]));
+                query_profile_scores_3di[j][i] = 1 / (1 + std::exp(-mat_3di->subMatrix[j][query_3di_seq[i]] + composition_bias_ss[i]));
+                query_profile_scores_nbr[j][i] = 1 / (1 + std::exp(-mat_nbr->subMatrix[j][query_nbr_seq[i]]));
             }
         }
     }
    
-    short **target_profile_scores_aa = new short * [aligner.get_profile()->alphabetSize];
-    short **target_profile_scores_3di = new short * [aligner.get_profile()->alphabetSize];
-    short **target_profile_scores_nbr = new short * [aligner.get_profile()->alphabetSize];
+    float **target_profile_scores_aa  = new float * [aligner.get_profile()->alphabetSize];
+    float **target_profile_scores_3di = new float * [aligner.get_profile()->alphabetSize];
+    float **target_profile_scores_nbr = new float * [aligner.get_profile()->alphabetSize];
     for (int32_t j = 0; j < aligner.get_profile()->alphabetSize; j++) {
-        target_profile_scores_aa[j]  = new short [target_aa->L];
-        target_profile_scores_3di[j] = new short [target_aa->L];
-        target_profile_scores_nbr[j] = new short [target_aa->L];
+        target_profile_scores_aa[j]  = new float [target_aa->L];
+        target_profile_scores_3di[j] = new float [target_aa->L];
+        target_profile_scores_nbr[j] = new float [target_aa->L];
     }
     if (targetIsProfile) {
         for (int i = 0; i < target_aa->L; i++) {
             for (int32_t j = 0; j < aligner.get_profile()->alphabetSize; j++) {
-                target_profile_scores_aa[j][i]  = target_aa->profile_for_alignment[j * target_aa->L + i];
-                target_profile_scores_3di[j][i] = target_3di->profile_for_alignment[j * target_aa->L + i];
-                target_profile_scores_nbr[j][i] = target_nbr->profile_for_alignment[j * target_aa->L + i];
+                target_profile_scores_aa[j][i]  = 1 / (1 + std::exp(-target_aa->profile_for_alignment[j * target_aa->L + i]));
+                target_profile_scores_3di[j][i] = 1 / (1 + std::exp(-target_3di->profile_for_alignment[j * target_aa->L + i]));
+                target_profile_scores_nbr[j][i] = 1 / (1 + std::exp(-target_nbr->profile_for_alignment[j * target_aa->L + i]));
             }
         }
     } else {
         for (int i = 0; i < target_aa->L; i++) {
             for (int32_t j = 0; j < aligner.get_profile()->alphabetSize; j++) {
-                target_profile_scores_aa[j][i]  = mat_aa->subMatrix[j][target_aa_seq[i]];
-                target_profile_scores_3di[j][i] = mat_3di->subMatrix[j][target_3di_seq[i]];
-                target_profile_scores_nbr[j][i] = mat_nbr->subMatrix[j][target_nbr_seq[i]];
+                target_profile_scores_aa[j][i]  = 1 / (1 + std::exp(-mat_aa->subMatrix[j][target_aa_seq[i]]));
+                target_profile_scores_3di[j][i] = 1 / (1 + std::exp(-mat_3di->subMatrix[j][target_3di_seq[i]]));
+                target_profile_scores_nbr[j][i] = 1 / (1 + std::exp(-mat_nbr->subMatrix[j][target_nbr_seq[i]]));
             }
         }
     }
@@ -406,7 +406,7 @@ Matcher::result_t pairwiseAlignment(
     // }
     // std::cout << '\n';
 
-    Matcher::result_t gAlign = aligner.simpleGotoh(
+    Matcher::result_t gAlign = aligner.FwdBwd(
         target_aa_seq,
         target_3di_seq,
         target_nbr_seq,

@@ -681,25 +681,151 @@ double edis(const std::vector<int> &one, const std::vector<int> &two) {
     // return 1.0 / (1.0 + std::sqrt(result));
 }
 
+Matcher::result_t StructureSmithWaterman::FwdBwd(
+    const unsigned char *db_sequence_aa,
+    const unsigned char *db_sequence_3di,
+    const unsigned char *db_sequence_nbr,
+    const unsigned char *query_sequence_nbr,
+    float **query_profile_word_aa,
+    float **query_profile_word_3di,
+    float **query_profile_word_nbr,
+    float **target_profile_word_aa,
+    float **target_profile_word_3di,
+    float **target_profile_word_nbr,
+    int32_t query_start, int32_t query_end,
+    int32_t target_start, int32_t target_end,
+    const short gap_open, const short gap_extend, bool targetIsProfile,
+    std::vector<std::vector<std::vector<int> > > &neighbours,
+    size_t queryId,
+    size_t targetId,
+    std::vector<int> qMap,
+    std::vector<int> tMap
+) {
+    struct scores {
+        float F, // Forward probability
+              B, // Backwards probability
+              P; // Posterior probability
+    };
+    
+    int query_length = query_end - query_start;
+    int target_length = target_end - target_start;
+    int MN = query_length * target_length;
+    
+    // Initialise matrix MxN
+    // Forward score first row/col = 0.5
+    // Backward score last row/col = 1.0
+    std::vector<scores> matrix(MN);
+    // scores *matrix = new scores[MN];
+    for (int i = 0; i < target_length; i++) {
+        matrix[i].F = 1.0;
+        matrix[(query_length - 1) * target_length + i].B = 1.0;        
+    }
+    for (int j = 0; j < query_length; j++) {
+        matrix[j * target_length].F = 1.0;
+        matrix[j * target_length + (target_length - 1)].B = 1.0;        
+    }
+    
+    // std::cout << "Initialised matrix:\n";
+    // for (int i = 0; i < target_length; i++) {
+    //     for (int j = 0; j < query_length; j++) {
+    //         std::cout << std::fixed << std::setprecision(2) << matrix[j * target_length + i].F << '/' << matrix[j * target_length + i].B << '\t';
+    //     }
+    //     std::cout << '\n';
+    // }
+   
+    // Do forward and backwards parts simultaenously
+    // Start at 2nd/2nd last residues (first/last set to 0.5/1.0)
+    size_t i, j, ii, jj;
+    for (i = 1, ii = target_length - 2; i < target_length; i++, ii--) {
+        const float *query_profile_aa      = query_profile_word_aa[db_sequence_aa[i]];
+        const float *query_profile_3di     = query_profile_word_3di[db_sequence_3di[i]];
+        const float *query_profile_nbr     = query_profile_word_nbr[db_sequence_nbr[i]];
+        const float *query_profile_aa_bwd  = query_profile_word_aa[db_sequence_aa[ii]];
+        const float *query_profile_3di_bwd = query_profile_word_3di[db_sequence_3di[ii]];
+        const float *query_profile_nbr_bwd = query_profile_word_nbr[db_sequence_nbr[ii]];
+
+        for (j = 1, jj = query_length - 2; j < query_length; j++, jj--) {
+            const float *target_profile_aa      = target_profile_word_aa[profile->query_aa_sequence[j]];
+            const float *target_profile_3di     = target_profile_word_3di[profile->query_3di_sequence[j]]; 
+            const float *target_profile_nbr     = target_profile_word_nbr[query_sequence_nbr[j]];
+            const float *target_profile_aa_bwd  = target_profile_word_aa[profile->query_aa_sequence[jj]];
+            const float *target_profile_3di_bwd = target_profile_word_3di[profile->query_3di_sequence[jj]]; 
+            const float *target_profile_nbr_bwd = target_profile_word_nbr[query_sequence_nbr[jj]];
+            
+            float cell, a, b, c;
+
+            // Forward score
+            // |b|c|
+            // |a|.|
+            cell = (
+                (query_profile_aa[j] + target_profile_aa[i]) / 2
+                + (query_profile_3di[j] + target_profile_3di[i]) / 2
+            ) / 2;
+            a = matrix[j     * target_length + (i-1)].F * cell;
+            b = matrix[(j-1) * target_length + (i-1)].F * cell;
+            c = matrix[(j-1) * target_length +     i].F * cell;
+            matrix[j * target_length + i].F = std::max(a, b);
+            matrix[j * target_length + i].F = std::max(matrix[j * target_length + i].F, c);
+
+            // Backward score
+            // |.|c|
+            // |a|b|
+            cell = (
+                (query_profile_aa_bwd[jj] + target_profile_aa_bwd[ii]) / 2
+                + (query_profile_3di_bwd[jj] + target_profile_3di_bwd[ii]) / 2
+            ) / 2;
+            a = matrix[jj     * target_length + (ii+1)].B * cell;
+            b = matrix[(jj+1) * target_length + (ii+1)].B * cell;
+            c = matrix[(jj+1) * target_length +     ii].B * cell;
+            matrix[jj * target_length + ii].B = std::max(a, b);
+            matrix[jj * target_length + ii].B = std::max(matrix[jj * target_length + ii].B, c);
+        }
+    }
+    
+    std::cout << "Filled matrix:\n";
+    for (int i = 0; i < target_length; i++) {
+        for (int j = 0; j < query_length; j++) {
+            std::cout
+                << std::fixed << std::setprecision(4)
+                << matrix[j * target_length + i].F << '/'
+                << matrix[j * target_length + i].B << '\t';
+        }
+        std::cout << '\n';
+    }
+ 
+    
+    // TODO
+    // Posterior decoding/traceback
+    // Iterate matrix
+    // Per cell:
+    //   Calculate normalisation factor (sum of products for all states at this cell)
+    //   Compute posterior probability with NF
+    
+    // delete[] matrix;
+    
+    exit(1);
+}
+
+
 Matcher::result_t StructureSmithWaterman::simpleGotoh(
-        const unsigned char *db_sequence_aa,
-        const unsigned char *db_sequence_3di,
-        const unsigned char *db_sequence_nbr,
-        const unsigned char *query_sequence_nbr,
-        short **query_profile_word_aa,
-        short **query_profile_word_3di,
-        short **query_profile_word_nbr,
-        short **target_profile_word_aa,
-        short **target_profile_word_3di,
-        short **target_profile_word_nbr,
-        int32_t query_start, int32_t query_end,
-        int32_t target_start, int32_t target_end,
-        const short gap_open, const short gap_extend, bool targetIsProfile,
-        std::vector<std::vector<std::vector<int> > > &neighbours,
-        size_t queryId,
-        size_t targetId,
-        std::vector<int> qMap,
-        std::vector<int> tMap
+    const unsigned char *db_sequence_aa,
+    const unsigned char *db_sequence_3di,
+    const unsigned char *db_sequence_nbr,
+    const unsigned char *query_sequence_nbr,
+    float **query_profile_word_aa,
+    float **query_profile_word_3di,
+    float **query_profile_word_nbr,
+    float **target_profile_word_aa,
+    float **target_profile_word_3di,
+    float **target_profile_word_nbr,
+    int32_t query_start, int32_t query_end,
+    int32_t target_start, int32_t target_end,
+    const short gap_open, const short gap_extend, bool targetIsProfile,
+    std::vector<std::vector<std::vector<int> > > &neighbours,
+    size_t queryId,
+    size_t targetId,
+    std::vector<int> qMap,
+    std::vector<int> tMap
 ) {
     // defining constants for backtracing
     const uint8_t B        = 0b00000001;
@@ -759,14 +885,14 @@ Matcher::result_t StructureSmithWaterman::simpleGotoh(
         // curr_sM_G_D_vec[query_start].H = 0;
         // curr_sM_G_D_vec[query_start].E = negInf;
         // curr_sM_G_D_vec[query_start].F = -gap_open - (i - 1) * -gap_extend;
-        const short *query_profile_aa  = query_profile_word_aa[db_sequence_aa[i]];
-        const short *query_profile_3di = query_profile_word_3di[db_sequence_3di[i]];
-        const short *query_profile_nbr = query_profile_word_nbr[db_sequence_nbr[i]];
+        const float *query_profile_aa  = query_profile_word_aa[db_sequence_aa[i]];
+        const float *query_profile_3di = query_profile_word_3di[db_sequence_3di[i]];
+        const float *query_profile_nbr = query_profile_word_nbr[db_sequence_nbr[i]];
 
         for (int j = query_start + 1; LIKELY(j <= query_end); j++) {
-            const short *target_profile_aa = target_profile_word_aa[profile->query_aa_sequence[j-1]];
-            const short *target_profile_3di = target_profile_word_3di[profile->query_3di_sequence[j-1]]; 
-            const short *target_profile_nbr = target_profile_word_nbr[query_sequence_nbr[j-1]];
+            const float *target_profile_aa = target_profile_word_aa[profile->query_aa_sequence[j-1]];
+            const float *target_profile_3di = target_profile_word_3di[profile->query_3di_sequence[j-1]]; 
+            const float *target_profile_nbr = target_profile_word_nbr[query_sequence_nbr[j-1]];
             
             // double cosVal = cosine(neighbours[queryId][qMap[j-1]], neighbours[targetId][tMap[i]]);
             // cosVal = std::log2(cosVal / (1 - cosVal));
