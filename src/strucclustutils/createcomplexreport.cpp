@@ -169,6 +169,7 @@ int createcomplexreport(int argc, const char **argv, const Command &command) {
             resultWriter.writeData(complexResults[complexResIdx].resultToWrite.c_str(), complexResults[complexResIdx].resultToWrite.length(), 0, localThreads - 1, false, false);
         }
     } // MP end
+
     resultWriter.close(true);
     if (isDb == false) {
         FileUtil::remove(par.db4Index.c_str());
